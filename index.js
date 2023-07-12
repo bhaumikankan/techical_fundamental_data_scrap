@@ -8,6 +8,7 @@ const mongoose = require("mongoose");
 const FundamentalDataModel = require("./FundamentalDataModel");
 const TechnicalDailyDataModel = require("./TechnicalDailyDataModel");
 const TechnicalHourDataModel = require("./TechnicalHourDataModel");
+const PriceDataModel = require("./PriceDataModel");
 
 const fetchFundamentalData = async (url, child_no) => {
   try {
@@ -248,12 +249,83 @@ const getTechnicalDataFetchDailyUrls = async (hour = false) => {
   }
 };
 
+const getLivePrice = async (url) => {
+  const result = await axios.get(url, {
+    headers: {
+      host: "www.topstockresearch.com",
+      "Content-Type": "application/json",
+      "User-Agent": "PostmanRuntime/7.32.3",
+    },
+  });
+  const $ = cheerio.load(result.data);
+  const data = {};
+  const tableHeaderSelector =
+    "body > div:nth-child(5) > div:nth-child(22) > div > div > div > table > thead > tr > th";
+  const headers = [];
+  $(tableHeaderSelector).each((i, el) => {
+    headers.push($(el).text().trim());
+  });
+  const tableRowSelector =
+    "body > div:nth-child(5) > div:nth-child(22) > div > div > div > table > tbody > tr > td";
+  $(tableRowSelector).each((i, el) => {
+    data[headers[i]] = $(el).text().trim();
+  });
+  return data;
+};
+
+const getLivePriceUrls = async () => {
+  for (const SYMBOL of symbol_list) {
+    const result = await axios.get(
+      `https://www.topstockresearch.com/rt/AutoComplete.tsr?ex=in&eqSubCat=BalanceSheet&term=${SYMBOL}`,
+      {
+        headers: {
+          host: "www.topstockresearch.com",
+          "Content-Type": "application/json",
+          "User-Agent": "PostmanRuntime/7.32.3",
+        },
+      },
+    );
+    const BalanceSheeturl = result.data[0].id;
+    if (BalanceSheeturl == "#") {
+      console.log("Symbol:", SYMBOL, " data Insertion failed");
+      continue;
+    }
+    const label = result.data[0].label;
+    const url = `https://www.topstockresearch.com/rt/TechStrength/${SYMBOL}/Tech/Min5`;
+    const data = await getLivePrice(url);
+    const priceDataObj = {
+      symbol: SYMBOL,
+      label: label,
+      Code: data["Code"],
+      Price: data["Price"],
+      Previous_Price: data["Previous Price"],
+      Price_Change: data["Price Change"],
+      Latest_Volume: data["Latest Volume"],
+      Five_Period_Avg_Volume: data["5 Period Avg Volume"],
+      Sector: data["Sector"],
+      Industry: data["Industry"],
+    };
+
+    await PriceDataModel.findOneAndUpdate({ symbol: SYMBOL }, priceDataObj, {
+      upsert: true,
+    });
+    console.log(
+      "Symbol:",
+      SYMBOL,
+      "Label:",
+      label,
+      " Live Price data Inserted",
+    );
+  }
+};
+
 app.listen(8080, () => {
   console.log("server running on port 8080");
   mongoose.connect("mongodb://127.0.0.1:27017/test").then(() => {
     console.log("Connected!");
     //getFundamentalDataFetchUrls(); //fundamental
     //getTechnicalDataFetchDailyUrls(); //daily technical
-    getTechnicalDataFetchDailyUrls(true); //hourly technical
+    //getTechnicalDataFetchDailyUrls(true); //hourly technical
+    getLivePriceUrls(); //Live Price
   });
 });
